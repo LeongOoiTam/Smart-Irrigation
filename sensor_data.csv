@@ -1,0 +1,13 @@
+Date,Soil_Moisture_Level,Sensor
+2024-11-01,35,Sensor1
+2024-11-01,60,Sensor1
+2024-11-02,45,Sensor1
+2024-11-02,75,Sensor1
+2024-11-03,25,Sensor1
+2024-11-03,40,Sensor1
+2024-11-01,50,Sensor2
+2024-11-01,65,Sensor2
+2024-11-02,55,Sensor2
+2024-11-02,30,Sensor2
+2024-11-03,70,Sensor2
+2024-11-03,20,Sensor2
