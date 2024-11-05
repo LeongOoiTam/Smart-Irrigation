@@ -1,5 +1,6 @@
 streamlit
 pandas
 reportlab
+gspread
 altair
 # Add any other dependencies your app uses
