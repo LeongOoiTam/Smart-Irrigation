@@ -3,4 +3,5 @@ pandas
 reportlab
 gspread
 altair
+oauth2client
 # Add any other dependencies your app uses
