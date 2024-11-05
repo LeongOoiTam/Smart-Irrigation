@@ -4,4 +4,5 @@ reportlab
 gspread
 altair
 oauth2client
+vl-convert-python
 # Add any other dependencies your app uses
