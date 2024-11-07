@@ -5,4 +5,7 @@ gspread
 altair
 oauth2client
 vl-convert-python
+pyserial
+plotly
+
 # Add any other dependencies your app uses
