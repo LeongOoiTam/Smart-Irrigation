@@ -8,6 +8,10 @@ from io import BytesIO
 import os
 import gspread
 import datetime
+import base64
+#import serial 
+import plotly.graph_objects as go
+import time
 from oauth2client.service_account import ServiceAccountCredentials
 
 # Helper function to load user data
@@ -26,18 +30,65 @@ def save_user(username, password, role):
 
 # Authentication and welcome page
 def welcome_page():
-    st.title("Welcome to SMART IRRI")
     if not st.session_state.get('show_animation', False):
         st.balloons()  # Display animation only once
         st.session_state.show_animation = True  # Prevent showing again
     st.success("Login successful!")
 
+# Function to encode image to base64 (for sidebar background)
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode()
+
 # Main application logic
 def main():
+    # Set the page configuration
+    st.set_page_config(page_title="SMART IRRI", page_icon=":shamrock:", layout="wide")
+
+    # Encode the background image to base64
+    encoded_image = encode_image("background.png")  # Path to your background image
+    encoded_imageSide = encode_image("backgroundSide.png")  # Path to your background image
+    
+
+   # Set custom CSS for the main background image
+    st.markdown(
+        f"""
+        <style>
+        .stApp {{
+            background-image: url('data:image/png;base64,{encoded_image}');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        
+        /* Apply background to the sidebar */
+        .css-1d391kg {{
+            background-image: url('data:image/png;base64,{encoded_imageSide}');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        
+        /* Alternatively, we can target a broader CSS class for the sidebar */
+        .stSidebar {{
+            background-image: url('data:image/png;base64,{encoded_imageSide}');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        </style>
+        """, unsafe_allow_html=True
+    )
+    
     # Initialize session state for login
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.show_animation = False
+        
+    # Display logo before login
+    st.image("logo.png", use_column_width=True)  # Path to your logo file
+    # Centering the title using HTML and Markdown
+    st.markdown("<h1 style='text-align: center;'>Welcome to SMART IRRI</h1>", unsafe_allow_html=True)
 
     # Authentication
     st.sidebar.title("Login or Register")
@@ -46,6 +97,7 @@ def main():
     auth_pass = st.sidebar.text_input("Password", type="password")
     role = None
 
+   
     if auth_type == "Register":
         role = st.sidebar.selectbox("Register as", ["Farmer/Client", "Maintenance Worker"])
         if st.sidebar.button("Register"):
@@ -65,7 +117,7 @@ def main():
         welcome_page()
 
         # Main functionality selection
-        functionality = st.selectbox("Select Functionality", ["Sensor Data Analysis", "Real-Time Control"])
+        functionality = st.selectbox("Select Functionality", ["Real-Time Control", "Sensor Data Analysis"])
 
         if functionality == "Sensor Data Analysis":
             sensor_analysis()
@@ -228,25 +280,176 @@ def sensor_analysis():
             st.download_button("Download PDF Report", pdf_buffer, "soil_moisture_report.pdf", "application/pdf")
 
 
+# Add session state variables for the manual override and the time of the change
+if 'manual_override_time' not in st.session_state:
+    st.session_state.manual_override_time = None  # Time when manual change happened
+    st.session_state.manual_override_status = None  # Manual status (ON/OFF)
+    st.session_state.water_pump_status = "OFF"  # Initial status of the water pump (False = OFF)
+    st.session_state.countdown = 60  # 60-second countdown timer
 
 # Real-Time Control functionality
 def real_time_control():
-    st.header("Real-Time Soil Moisture Monitoring and Pump Control")
-
+    st.header("Soil Moisture Monitoring")
+    
     # Simulated real-time soil moisture data (replace with actual sensor integration)
     soil_moisture_level = st.slider("Current Soil Moisture Level", 0, 100, 50)
-    water_pump_status = st.radio("Water Pump Status", ("ON", "OFF"))
 
-    # Display current sensor data
-    st.metric(label="Soil Moisture Level", value=f"{soil_moisture_level}%")
-    st.metric(label="Water Pump Status", value=water_pump_status)
+    # Create centered layout
+    col1, col2, col3 = st.columns([1, 3, 1])  # Adjust column widths to center content
 
-    # Manual water pump control
-    if st.button("Turn Water Pump ON"):
-        st.success("Water pump turned ON")
-    elif st.button("Turn Water Pump OFF"):
-        st.warning("Water pump turned OFF")
+    with col2:  # This will center the content in the middle column
+        # Centering the label
+        st.markdown("<h3 style='text-align: center;'>Soil Moisture Level</h3>", unsafe_allow_html=True)
+    
+        # Centering the value using markdown
+        st.markdown(f"<h1 style='text-align: center; font-size: 60px;'>{soil_moisture_level}%</h1>", unsafe_allow_html=True)
 
+    # Create a car-meter style gauge
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=soil_moisture_level,
+        title={'text': "Soil Moisture Level"},
+        gauge={'axis': {'range': [0, 100]},
+               'bar': {'color': "lightblue"},
+               'steps': [
+                   {'range': [0, 20], 'color': "red"},
+                   {'range': [20, 50], 'color': "yellow"},
+                   {'range': [50, 100], 'color': "green"}],
+               'threshold': {'line': {'color': "blue", 'width': 4}, 'thickness': 0.75, 'value': soil_moisture_level}}))
+
+    st.plotly_chart(fig)
+
+    # Water Pump Control Section - Radio button for controlling the pump
+    st.header("Water Pump Control")
+
+    # Add custom CSS to center and style the radio button
+    st.markdown("""
+        <style>
+            .center-radio {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-size: 30px; /* Larger font size for the radio button text */
+            }
+            .stRadio {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                width: 100%;
+            }
+            .stRadio label {
+                font-size: 30px;  /* Larger font size for the radio button text */
+                text-align: center;
+            }
+            .instruction-text {
+                font-size: 20px;
+                color: #555;
+                text-align: center;
+                margin-top: 10px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Create centered layout for the radio button and add instruction text
+    st.markdown("<div class='center-radio'>", unsafe_allow_html=True)
+
+    # Add custom CSS to create a bordered box around the instructions and radio button
+    st.markdown("""
+        <style>
+            .bordered-box {
+                border: 2px solid #ccc;
+                padding: 20px;
+                border-radius: 10px;
+                background-color: #f9f9f9;
+                margin: 20px 0;
+            }
+            .instruction-text {
+                font-size: 20px;
+                color: #555;
+                text-align: center;
+                margin-bottom: 10px;
+            }
+            .stRadio {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-size: 20px;
+                margin-top: 10px;
+            }
+             .expander-header {{
+            font-size: 30px; /* Adjust the font size as needed */
+            font-weight: bold;
+        }}
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Create the bordered box using an expander
+    with st.expander("Manual Control Only"):
+        st.markdown("<div class='instruction-text'>Press the button below to toggle the water pump ON or OFF. <br>Press twice to change the status.<br></div>", unsafe_allow_html=True)
+
+        # Radio button for water pump control inside the bordered box
+        toggle_value = st.radio(
+            " ",
+            options=["ON", "OFF"],
+            index=0 if st.session_state.water_pump_status == "ON" else 1,  # Set the radio button index based on session state
+            horizontal=True,
+            key="water_pump_status_radio"
+        )
+
+     # Handle manual override of the water pump
+    if toggle_value != st.session_state.water_pump_status:
+        st.session_state.water_pump_status = toggle_value
+        st.session_state.manual_override_time = time.time()  # Record the time of manual change
+        st.session_state.countdown = 60  # Reset countdown to 60 seconds
+        st.session_state.manual_override_status = toggle_value  # Store the manual status
+
+   # If countdown is active, show manual control status and decrement the countdown
+    if st.session_state.manual_override_time is not None:
+        elapsed_time = time.time() - st.session_state.manual_override_time
+        remaining_time = max(60 - int(elapsed_time), 0)  # Calculate remaining time
+
+        if remaining_time > 0:
+            st.session_state.countdown = remaining_time
+            st.markdown(f"<h3 style='text-align: center; color: orange;'>Manual Control Activated ({remaining_time} seconds remaining)</h3>", unsafe_allow_html=True)
+
+        # Trigger auto-refresh every second
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.session_state.manual_override_time = None  # Reset manual override
+            st.session_state.manual_override_status = None  # Reset manual status
+
+    # After 60 seconds, revert to automatic control
+    if st.session_state.manual_override_status is None:
+        if soil_moisture_level < 50:
+            st.session_state.water_pump_status = "ON"
+        else:
+            st.session_state.water_pump_status = "OFF"
+        st.markdown("<h3 style='text-align: center; color: green;'>Auto Control Activated</h3>", unsafe_allow_html=True)
+
+    # Water Pump Status Display Section (updated status should reflect immediately)
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col2:
+        # Update emoji based on water pump status
+        if st.session_state.water_pump_status == "ON":
+            pump_emoji = "💧"
+            pump_status_color = "green"
+        else:
+            pump_emoji = "🚫💧"
+            pump_status_color = "red"
+    
+        # Display pump status with emoji
+        st.markdown(f"<h3 style='text-align:center; color:{pump_status_color}; font-size: 30px;'>{pump_emoji} Water Pump Status</h3>", unsafe_allow_html=True)
+
+    # Centered layout for the status value
+    col1, col2, ctimol3 = st.columns([1, 3, 1])
+    with col2:
+        # Display larger status value
+        st.markdown(f"<h1 style='text-align: center; font-size: 80px;'>{st.session_state.water_pump_status}</h1>", unsafe_allow_html=True)
+
+    # Optional: Add a visually appealing footer with additional information
+    st.markdown("<br><hr><p style='text-align:center;'>For more information, please refer to the system documentation.</p>", unsafe_allow_html=True)
+    
 # Run the application
 if __name__ == "__main__":
     main()
