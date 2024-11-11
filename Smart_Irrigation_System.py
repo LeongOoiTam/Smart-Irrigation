@@ -40,10 +40,30 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode()
 
+
+# Function to apply light theme styles
+def apply_light_theme():
+    # Light theme styles
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-color: #f5f5f5;
+            color: black;
+        }
+        .stSidebar {
+            background-color: #ffffff;
+            color: black;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
 # Main application logic
 def main():
     # Set the page configuration
     st.set_page_config(page_title="SMART IRRI", page_icon=":shamrock:", layout="wide")
+
+    apply_light_theme()  # Apply the light theme
 
     # Encode the background image to base64
     encoded_image = encode_image("background.png")  # Path to your background image
@@ -286,6 +306,7 @@ if 'manual_override_time' not in st.session_state:
     st.session_state.manual_override_status = None  # Manual status (ON/OFF)
     st.session_state.water_pump_status = "OFF"  # Initial status of the water pump (False = OFF)
     st.session_state.countdown = 60  # 60-second countdown timer
+    st.session_state.expander_minimized = False  # To control expander state
 
 # Real-Time Control functionality
 def real_time_control():
@@ -403,21 +424,25 @@ def real_time_control():
         st.session_state.countdown = 60  # Reset countdown to 60 seconds
         st.session_state.manual_override_status = toggle_value  # Store the manual status
 
-   # If countdown is active, show manual control status and decrement the countdown
+    countdown_display = st.empty()
+
+   # Countdown loop: Update every second until the countdown is finished
     if st.session_state.manual_override_time is not None:
-        elapsed_time = time.time() - st.session_state.manual_override_time
-        remaining_time = max(60 - int(elapsed_time), 0)  # Calculate remaining time
+        start_time = time.time()
+        
+        while True:
+            elapsed_time = time.time() - start_time
+            remaining_time = max(60 - int(elapsed_time), 0)  # Calculate remaining time
 
-        if remaining_time > 0:
-            st.session_state.countdown = remaining_time
-            st.markdown(f"<h3 style='text-align: center; color: orange;'>Manual Control Activated ({remaining_time} seconds remaining)</h3>", unsafe_allow_html=True)
-
-        # Trigger auto-refresh every second
-            time.sleep(1)
-            st.rerun()
-        else:
-            st.session_state.manual_override_time = None  # Reset manual override
-            st.session_state.manual_override_status = None  # Reset manual status
+            if remaining_time > 0:
+                countdown_display.markdown(f"<h3 style='text-align: center; color: orange;'>Manual Control Activated ({remaining_time} seconds remaining)</h3>", unsafe_allow_html=True)
+                time.sleep(1)  # Sleep for 1 second before updating again
+            else:
+                st.session_state.manual_override_time = None  # Reset manual override
+                st.session_state.manual_override_status = None  # Reset manual status
+                countdown_display.empty()  # Clear countdown display when finished
+                st.session_state.expander_minimized = True  # Minimize the expander after 60 seconds
+                break  # Exit the loop after the countdown is finished
 
     # After 60 seconds, revert to automatic control
     if st.session_state.manual_override_status is None:
