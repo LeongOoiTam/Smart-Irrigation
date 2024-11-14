@@ -9,10 +9,27 @@ import os
 import gspread
 import datetime
 import base64
-#import serial 
+import requests
 import plotly.graph_objects as go
 import time
 from oauth2client.service_account import ServiceAccountCredentials
+
+
+# Function to read the soil moisture level from Arduino
+def read_soil_moisture():
+    # The IP address of your ESP32 device
+    esp32_ip = "http://192.168.101.147"  # Replace with your actual IP
+
+    try:
+        response = requests.get(esp32_ip)
+        if response.status_code == 200:
+            data = response.json()  # Get the JSON response
+            soil_moisture = data['soil_moisture']
+            return soil_moisture
+        else:
+            return None
+    except Exception as e:
+        return None
 
 # Helper function to load user data
 def load_users():
@@ -147,17 +164,16 @@ def main():
         if auth_user or auth_pass:
             st.sidebar.error("Invalid username or password!")
 
-
-def generate_pdf_report(sensor_data, avg_soil_moisture, suggestions, charts, user_name):
+def generate_pdf_report(sensor_data, avg_soil_moisture, suggestions, charts, avg_temp, avg_humidity, user_name):
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
 
     # Cover Page
     p.setFont("Helvetica-Bold", 24)
-     # Add Logo
+    # Add Logo
     logo_path = "logo.png"  # Path to your logo image
-    p.drawImage(logo_path, width / 2 - 200 , height - 300, width=400, height=200)  # Adjust position and size as needed
+    p.drawImage(logo_path, width / 2 - 200, height - 300, width=400, height=200)  # Adjust position and size as needed
     p.drawCentredString(width / 2, height - 360, "Soil Moisture Analysis Report")
 
     # User Details
@@ -170,45 +186,56 @@ def generate_pdf_report(sensor_data, avg_soil_moisture, suggestions, charts, use
 
     # Data Summary Section
     p.setFont("Helvetica", 12)
-    p.drawString(72, height - 72, "Summary of Soil Moisture Data:")
-    
-    # Write sensor data
+    p.drawString(72, height - 72, "Summary of Sensor Data:")
+
+    # Write sensor data (Display Date, Soil Moisture Level, Temperature, Humidity)
     y_position = height - 100
     for i, row in sensor_data.iterrows():
         if y_position < 72:  # If the position is too low, start a new page
             p.showPage()
             p.setFont("Helvetica", 12)
             y_position = height - 72
-        
-        p.drawString(72, y_position, f"Date: {row['Date']}, Soil Moisture Level: {row['Soil_Moisture_Level']}%")
+
+        p.drawString(72, y_position, f"Date: {row['Datetime']}, Soil Moisture Level: {row['Soil_Moisture_Level']}%, "
+                                     f"Temperature: {row['Temperature']}°C, Humidity: {row['Humidity']}%")
         y_position -= 20  # Move down for the next entry
 
-    # Average Soil Moisture
+    # Page Break for Average Values
     p.showPage()
     p.setFont("Helvetica", 12)
     p.drawString(72, height - 72, f"Average Soil Moisture Level: {avg_soil_moisture:.2f}%")
+    p.drawString(72, height - 92, f"Average Temperature: {avg_temp:.2f}°C")
+    p.drawString(72, height - 112, f"Average Humidity: {avg_humidity:.2f}%")
 
-    # Recommendations
-    p.drawString(72, height - 92, "Recommendations:")
-    for i, suggestion in enumerate(suggestions):
-        y_position = height - 112 - (i * 20)
+    # Recommendations based on soil moisture levels
+    p.drawString(72, height - 152, "Recommendations:")
+    y_position = height - 172
+    for suggestion in suggestions:
         if y_position < 72:  # Start a new page if necessary
             p.showPage()
             p.setFont("Helvetica", 12)
             y_position = height - 72
-        
-        p.drawString(72, y_position, f"- {suggestion}")
 
-    # Add charts to PDF
-    for chart_img in charts:
+        p.drawString(72, y_position, f"- {suggestion}")
+        y_position -= 20
+
+    # Save and Add charts to PDF
+    for i, chart in enumerate(charts):
+        # Save each chart as a PNG image
+        chart_img_path = f"chart_{i}.png"
+        chart.save(chart_img_path, format='png')  # Save the chart to a file
+
+        # Add the chart image to the PDF
         p.showPage()  # Start a new page for each chart
-        p.drawImage(chart_img, 72, height - 400, width=500, height=300)  # Adjust coordinates and size as needed
+        p.drawImage(chart_img_path, 72, height - 400, width=500, height=300)  # Adjust coordinates and size as needed
 
     p.showPage()  # Finalize the PDF
     p.save()
     buffer.seek(0)
 
     return buffer
+
+
 
 
 # Sensor Data Analysis functionality
@@ -218,262 +245,191 @@ def sensor_analysis():
     # Instructions for the user
     st.markdown("""
     **Instructions:**
-    1. Please upload a CSV file containing your soil moisture sensor data.
+    1. Please upload a CSV file containing your sensor data.
     2. The CSV file should have the following columns:
-       - `Date`: Date of the reading.
+       - `Datetime`: The combined date and time of the reading.
        - `Soil_Moisture_Level`: The measured soil moisture level (in percentage).
-       - `Sensor`: Identifier for the sensor (optional if multiple sensors are used).
+       - `Temperature`: The temperature at the time of reading (in Celsius).
+       - `Humidity`: The humidity at the time of reading (in percentage).
     3. Once the file is uploaded, the system will analyze the data and provide insights and recommendations.
     4. After reviewing the analysis, you can generate a report by clicking the button below.
     """)
     
     uploaded_file = st.file_uploader("Upload Sensor Data (CSV)", type="csv")
 
+    # Inside sensor_analysis function
     if uploaded_file:
+        # Read the CSV file
         sensor_data = pd.read_csv(uploaded_file)
+
+        # Convert the Datetime column to datetime format
+        sensor_data['Datetime'] = pd.to_datetime(sensor_data['Datetime'])
+
+        # Display the uploaded data
         st.write(sensor_data)
 
-        # Visualization: Soil Moisture Levels
+        # Visualizations
         soil_moisture_chart = alt.Chart(sensor_data).mark_line().encode(
-            x='Date:T',
-            y='Soil_Moisture_Level:Q',
-            color='Sensor:N'
-        ).properties(title="Soil Moisture Level Monitoring")
+            x='Datetime:T',
+            y='Soil_Moisture_Level:Q'
+        ).properties(title="Soil Moisture Level Monitoring Over Time")
 
-        # Save the chart as an image
-        soil_moisture_chart_image = f"soil_moisture_chart.png"
-        soil_moisture_chart.save(soil_moisture_chart_image)
+        temperature_chart = alt.Chart(sensor_data).mark_line(color='red').encode(
+            x='Datetime:T',
+            y='Temperature:Q'
+        ).properties(title="Temperature Monitoring Over Time")
 
-        st.altair_chart(soil_moisture_chart, use_container_width=True)
+        humidity_chart = alt.Chart(sensor_data).mark_line(color='blue').encode(
+            x='Datetime:T',
+            y='Humidity:Q'
+        ).properties(title="Humidity Monitoring Over Time")
 
-        # Histogram of Soil Moisture Levels
-        histogram = alt.Chart(sensor_data).mark_bar().encode(
+        moisture_histogram = alt.Chart(sensor_data).mark_bar().encode(
             alt.X('Soil_Moisture_Level:Q', bin=True),
-            y='count()',
-            color='Sensor:N'
+            y='count()'
         ).properties(title="Distribution of Soil Moisture Levels")
-        
-        # Save histogram as an image
-        histogram_image = f"histogram.png"
-        histogram.save(histogram_image)
 
-        st.altair_chart(histogram, use_container_width=True)
 
-        # Moving Average
-        sensor_data['Moving_Average'] = sensor_data['Soil_Moisture_Level'].rolling(window=3).mean()
-        moving_average_chart = alt.Chart(sensor_data).mark_line(color='orange').encode(
-            x='Date:T',
-            y='Moving_Average:Q'
-        ).properties(title="Moving Average of Soil Moisture Levels")
-        
-        # Save moving average chart as an image
-        moving_average_chart_image = f"moving_average_chart.png"
-        moving_average_chart.save(moving_average_chart_image)
+        # Average calculations
+        avg_temp = sensor_data['Temperature'].mean()
+        avg_humidity = sensor_data['Humidity'].mean()
 
-        st.altair_chart(moving_average_chart, use_container_width=True)
-
-        # Suggestions based on data
+        # Suggestions
         avg_soil_moisture = sensor_data['Soil_Moisture_Level'].mean()
-        suggestions = []  # Initialize suggestions list
+        suggestions = []
         if avg_soil_moisture < 21:
-            suggestions.append("Very low soil moisture! Immediate irrigation is recommended for highland fruits. Check sensor calibration.")
-            suggestions.append("Consider planting drought-resistant varieties if conditions persist.")
+            suggestions.append("Very low soil moisture! Immediate irrigation is recommended.")
         elif avg_soil_moisture < 41:
-            suggestions.append("Low soil moisture. Consider increasing irrigation frequency, especially for strawberries.")
-            suggestions.append("Monitor weather conditions closely for potential rainfall.")
+            suggestions.append("Low soil moisture. Consider increasing irrigation frequency.")
         elif avg_soil_moisture < 71:
-            suggestions.append("Optimal soil moisture levels for highland fruits. Continue current irrigation practices.")
-            suggestions.append("This is a good time for applying balanced fertilizers.")
-        elif avg_soil_moisture < 86:
-            suggestions.append("High soil moisture. Reduce irrigation frequency and ensure good drainage to prevent root rot.")
-            suggestions.append("Monitor for diseases that thrive in moist conditions.")
+            suggestions.append("Optimal soil moisture levels. Continue current irrigation practices.")
         else:
-            suggestions.append("Very high soil moisture! Take immediate actions to prevent root rot and potential crop loss.")
-            suggestions.append("Consider organic mulching to help retain soil moisture in hot conditions.")
+            suggestions.append("High soil moisture. Reduce irrigation to avoid overwatering.")
+
+        total_performance_chart = alt.Chart(sensor_data).transform_fold(
+            ['Soil_Moisture_Level', 'Temperature', 'Humidity'],  # Columns to fold (combine)
+            as_=['Metric', 'Value']  # Metric will be used to distinguish between soil moisture, temperature, and humidity
+        ).mark_line().encode(
+            x='Datetime:T',  # Datetime as X-axis
+            y='Value:Q',  # Values of metrics (soil moisture, temperature, humidity) on the Y-axis
+            color='Metric:N'  # Different color for each metric
+        ).properties(
+            title="Total Performance of Soil Moisture, Temperature, and Humidity Over Time"
+        )
+
+        # Display charts
+        st.altair_chart(soil_moisture_chart, use_container_width=True)
+        st.altair_chart(temperature_chart, use_container_width=True)
+        st.altair_chart(humidity_chart, use_container_width=True)
+        st.altair_chart(moisture_histogram, use_container_width=True)
+        st.altair_chart(total_performance_chart, use_container_width=True)
+
+        # Display average temperature and humidity
+        st.write(f"Average Temperature: {avg_temp:.2f}°C")
+        st.write(f"Average Humidity: {avg_humidity:.2f}%")
 
         # Button to generate report
-        user_name = "Farmer John"  # Example user name, replace with actual input if necessary
+        user_name = "Farmer John"  # Replace with user input if necessary
         if st.button("Generate Report"):
-            # Pass the chart images to the report generation function
-            charts = [soil_moisture_chart_image, histogram_image, moving_average_chart_image]
-            pdf_buffer = generate_pdf_report(sensor_data, avg_soil_moisture, suggestions, charts, user_name=user_name)
-            st.download_button("Download PDF Report", pdf_buffer, "soil_moisture_report.pdf", "application/pdf")
+            # Include all charts
+            charts = [
+                soil_moisture_chart,
+                temperature_chart,
+                humidity_chart,
+                moisture_histogram,
+                total_performance_chart  # Add Total Performance chart
+            ]
+            pdf_buffer = generate_pdf_report(sensor_data, avg_soil_moisture, suggestions, charts, avg_temp, avg_humidity, user_name=user_name)
+            st.download_button("Download PDF Report", pdf_buffer, "sensor_data_report.pdf", "application/pdf")
 
 
-# Add session state variables for the manual override and the time of the change
-if 'manual_override_time' not in st.session_state:
-    st.session_state.manual_override_time = None  # Time when manual change happened
-    st.session_state.manual_override_status = None  # Manual status (ON/OFF)
-    st.session_state.water_pump_status = "OFF"  # Initial status of the water pump (False = OFF)
-    st.session_state.countdown = 60  # 60-second countdown timer
-    st.session_state.expander_minimized = False  # To control expander state
+
+# Add session state variables for the auto-control
+if 'water_pump_status' not in st.session_state:
+    st.session_state.water_pump_status = "OFF"  # Initial status of the water pump
+if 'water_pump_status_displayed' not in st.session_state:
+    st.session_state.water_pump_status_displayed = False  # Track if the status display was already created
 
 # Real-Time Control functionality
 def real_time_control():
     st.header("Soil Moisture Monitoring")
-    
-    # Simulated real-time soil moisture data (replace with actual sensor integration)
-    soil_moisture_level = st.slider("Current Soil Moisture Level", 0, 100, 50)
 
-    # Create centered layout
-    col1, col2, col3 = st.columns([1, 3, 1])  # Adjust column widths to center content
+    # Initialize the placeholders for real-time updates
+    soil_moisture_display = st.empty()
+    soil_moisture_value_display = st.empty()
+    soil_moisture_chart_display = st.empty()
 
-    with col2:  # This will center the content in the middle column
-        # Centering the label
-        st.markdown("<h3 style='text-align: center;'>Soil Moisture Level</h3>", unsafe_allow_html=True)
-    
-        # Centering the value using markdown
-        st.markdown(f"<h1 style='text-align: center; font-size: 60px;'>{soil_moisture_level}%</h1>", unsafe_allow_html=True)
+    while True:
+        # Get the real-time soil moisture level from Arduino
+        soil_moisture_level = read_soil_moisture()
 
-    # Create a car-meter style gauge
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=soil_moisture_level,
-        title={'text': "Soil Moisture Level"},
-        gauge={'axis': {'range': [0, 100]},
-               'bar': {'color': "lightblue"},
-               'steps': [
-                   {'range': [0, 20], 'color': "red"},
-                   {'range': [20, 50], 'color': "yellow"},
-                   {'range': [50, 100], 'color': "green"}],
-               'threshold': {'line': {'color': "blue", 'width': 4}, 'thickness': 0.75, 'value': soil_moisture_level}}))
+        if soil_moisture_level is not None:
+            # Display the current soil moisture level using a slider (disabled for display purposes)
+            key = f"soil_moisture_slider_{soil_moisture_level}_{int(time.time())}"
+            soil_moisture_display.slider("Current Soil Moisture Level", 0, 100, soil_moisture_level, key=key, disabled=True)
 
-    st.plotly_chart(fig)
+            # Create centered layout
+            col1, col2, col3 = st.columns([1, 3, 1])  # Adjust column widths to center content
 
-    # Water Pump Control Section - Radio button for controlling the pump
-    st.header("Water Pump Control")
+            with col2:  # Center the content in the middle column
+                if not hasattr(st.session_state, 'label_displayed'):  # Display label once
+                    st.markdown("<h3 style='text-align: center;'>Soil Moisture Level</h3>", unsafe_allow_html=True)
+                    st.session_state.label_displayed = True
 
-    # Add custom CSS to center and style the radio button
-    st.markdown("""
-        <style>
-            .center-radio {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                font-size: 30px; /* Larger font size for the radio button text */
-            }
-            .stRadio {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                width: 100%;
-            }
-            .stRadio label {
-                font-size: 30px;  /* Larger font size for the radio button text */
-                text-align: center;
-            }
-            .instruction-text {
-                font-size: 20px;
-                color: #555;
-                text-align: center;
-                margin-top: 10px;
-            }
-        </style>
-    """, unsafe_allow_html=True)
+                # Dynamically update the value display
+                soil_moisture_value_display.empty()  # Clear previous value
+                soil_moisture_value_display.markdown(f"<h1 style='text-align: center; font-size: 60px;'>{soil_moisture_level}%</h1>", unsafe_allow_html=True)
 
-    # Create centered layout for the radio button and add instruction text
-    st.markdown("<div class='center-radio'>", unsafe_allow_html=True)
+            # Create the car-meter style gauge chart
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=soil_moisture_level,
+                title={'text': "Soil Moisture Level"},
+                gauge={'axis': {'range': [0, 100]},
+                       'bar': {'color': "lightblue"},
+                       'steps': [
+                           {'range': [0, 20], 'color': "red"},
+                           {'range': [20, 50], 'color': "yellow"},
+                           {'range': [50, 100], 'color': "green"}],
+                       'threshold': {'line': {'color': "blue", 'width': 4}, 'thickness': 0.75, 'value': soil_moisture_level}}))
 
-    # Add custom CSS to create a bordered box around the instructions and radio button
-    st.markdown("""
-        <style>
-            .bordered-box {
-                border: 2px solid #ccc;
-                padding: 20px;
-                border-radius: 10px;
-                background-color: #f9f9f9;
-                margin: 20px 0;
-            }
-            .instruction-text {
-                font-size: 20px;
-                color: #555;
-                text-align: center;
-                margin-bottom: 10px;
-            }
-            .stRadio {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                font-size: 20px;
-                margin-top: 10px;
-            }
-             .expander-header {{
-            font-size: 30px; /* Adjust the font size as needed */
-            font-weight: bold;
-        }}
-        </style>
-    """, unsafe_allow_html=True)
+            # Update the chart dynamically using the placeholder
+            chart_key = f"soil_moisture_chart_{int(time.time())}"
+            soil_moisture_chart_display.plotly_chart(fig, use_container_width=True, key=chart_key)
 
-    # Create the bordered box using an expander
-    with st.expander("Manual Control Only"):
-        st.markdown("<div class='instruction-text'>Press the button below to toggle the water pump ON or OFF. <br>Press twice to change the status.<br></div>", unsafe_allow_html=True)
-
-        # Radio button for water pump control inside the bordered box
-        toggle_value = st.radio(
-            " ",
-            options=["ON", "OFF"],
-            index=0 if st.session_state.water_pump_status == "ON" else 1,  # Set the radio button index based on session state
-            horizontal=True,
-            key="water_pump_status_radio"
-        )
-
-     # Handle manual override of the water pump
-    if toggle_value != st.session_state.water_pump_status:
-        st.session_state.water_pump_status = toggle_value
-        st.session_state.manual_override_time = time.time()  # Record the time of manual change
-        st.session_state.countdown = 60  # Reset countdown to 60 seconds
-        st.session_state.manual_override_status = toggle_value  # Store the manual status
-
-    countdown_display = st.empty()
-
-   # Countdown loop: Update every second until the countdown is finished
-    if st.session_state.manual_override_time is not None:
-        start_time = time.time()
-        
-        while True:
-            elapsed_time = time.time() - start_time
-            remaining_time = max(60 - int(elapsed_time), 0)  # Calculate remaining time
-
-            if remaining_time > 0:
-                countdown_display.markdown(f"<h3 style='text-align: center; color: orange;'>Manual Control Activated ({remaining_time} seconds remaining)</h3>", unsafe_allow_html=True)
-                time.sleep(1)  # Sleep for 1 second before updating again
+            # Water Pump Control - Auto mode logic
+            if soil_moisture_level < 50:
+                # Automatically turn the water pump ON if moisture is below 50%
+                st.session_state.water_pump_status = "ON"
             else:
-                st.session_state.manual_override_time = None  # Reset manual override
-                st.session_state.manual_override_status = None  # Reset manual status
-                countdown_display.empty()  # Clear countdown display when finished
-                st.session_state.expander_minimized = True  # Minimize the expander after 60 seconds
-                break  # Exit the loop after the countdown is finished
+                # Automatically turn the water pump OFF if moisture is 50% or higher
+                st.session_state.water_pump_status = "OFF"
 
-    # After 60 seconds, revert to automatic control
-    if st.session_state.manual_override_status is None:
-        if soil_moisture_level < 50:
-            st.session_state.water_pump_status = "ON"
+            # Water Pump Status Display Section - Display it once, then only update status dynamically
+            if not st.session_state.water_pump_status_displayed:
+                st.session_state.water_pump_status_displayed = True  # Track that we've displayed the status section once
+
+                # Placeholder for the status display
+                st.session_state.water_pump_status_placeholder = st.empty()
+
+            # Dynamically update the status display only when water pump status changes
+            pump_emoji = "💧" if st.session_state.water_pump_status == "ON" else "🚫💧"
+            pump_status_color = "green" if st.session_state.water_pump_status == "ON" else "red"
+
+            # Update the water pump status display dynamically in the placeholder
+            st.session_state.water_pump_status_placeholder.markdown(
+                f"<h3 style='text-align:center; color:{pump_status_color}; font-size: 30px;'>{pump_emoji} Water Pump Status</h3>"
+                f"<h1 style='text-align: center; font-size: 80px;'>{st.session_state.water_pump_status}</h1>",
+                unsafe_allow_html=True
+            )
+
         else:
-            st.session_state.water_pump_status = "OFF"
-        st.markdown("<h3 style='text-align: center; color: green;'>Auto Control Activated</h3>", unsafe_allow_html=True)
+            # Display an error message if data could not be fetched
+            soil_moisture_display.error("Failed to read data from the sensor.")
 
-    # Water Pump Status Display Section (updated status should reflect immediately)
-    col1, col2, col3 = st.columns([1, 3, 1])
-    with col2:
-        # Update emoji based on water pump status
-        if st.session_state.water_pump_status == "ON":
-            pump_emoji = "💧"
-            pump_status_color = "green"
-        else:
-            pump_emoji = "🚫💧"
-            pump_status_color = "red"
-    
-        # Display pump status with emoji
-        st.markdown(f"<h3 style='text-align:center; color:{pump_status_color}; font-size: 30px;'>{pump_emoji} Water Pump Status</h3>", unsafe_allow_html=True)
+        # Refresh the page every 1 second to simulate real-time data fetching
+        time.sleep(1)
 
-    # Centered layout for the status value
-    col1, col2, ctimol3 = st.columns([1, 3, 1])
-    with col2:
-        # Display larger status value
-        st.markdown(f"<h1 style='text-align: center; font-size: 80px;'>{st.session_state.water_pump_status}</h1>", unsafe_allow_html=True)
-
-    # Optional: Add a visually appealing footer with additional information
-    st.markdown("<br><hr><p style='text-align:center;'>For more information, please refer to the system documentation.</p>", unsafe_allow_html=True)
     
 # Run the application
 if __name__ == "__main__":
